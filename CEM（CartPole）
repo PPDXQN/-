@@ -1,0 +1,103 @@
+
+#CEM method
+
+# modified from https://gist.github.com/andrewliao11/d52125b52f76a4af73433e1cf8405a8f
+
+import gym
+import numpy as np
+import matplotlib.pyplot as plt
+
+env = gym.make('CartPole-v1')
+env = env.unwrapped
+env.render()
+
+#vector of means(mu) and standard dev(sigma) for each paramater
+mu = np.random.uniform(size = env.observation_space.shape)
+sigma = np.random.uniform(low = 0.001,size = env.observation_space.shape)
+print(mu.shape)
+print(sigma.shape)
+
+def noisy_evaluation(env,W,render = False,):
+    """
+    uses parameter vector W to choose policy for 1 episode,
+    returns reward from that episode
+    使用参数向量 W 为 1回合来选择策略,
+    从该回合中返回奖励
+    """
+    reward_sum = 0
+    state = env.reset()
+    t = 0
+    while True:
+      t += 1
+      action = int(np.dot(W,state)>0) # use parameters/state to choose action 为啥这样选动作，向量点积，再取整数
+      state,reward,done,info,_ = env.step(action)
+      reward_sum += reward
+      if render and t%3 == 0: env.render()  #如果允许render，当前回合，每3步render一次
+      if done or t > 2000: # 回合结束或者大于2000步结束回合
+            #print("finished episode, got reward:{}".format(reward_sum)) 
+            print("step",t)
+            break
+
+    return reward_sum
+
+#初始化参数 生成n*4的参数矩阵
+def init_params(mu,sigma,n):
+    """
+    以mu和sigma的维度(=4)分量为均值和方差，采样n=40个点，组成n个4维向量
+    """
+    l = mu.shape[0] # l=4
+    w_matrix = np.zeros((n,l))
+    for p in range(l):
+        w_matrix[:,p] = np.random.normal(loc = mu[p],scale = sigma[p]+1e-7,size = (n,))
+    return w_matrix
+
+def get_constant_noise(step):
+    return np.clip(5-step/10., a_max=1,a_min=0.5)
+
+running_reward = 0
+
+#n :每次迭代,采样的轨迹数
+#n_iter:迭代次数
+# p：从n=40条中选p条轨迹
+n = 40;p = 8;n_iter = 40;render = False
+
+state = env.reset()
+i = 0
+
+
+while i < n_iter:
+    #initialize an array of parameter vectors
+    # 初始化参数向量数组
+    wvector_array = init_params(mu,sigma,n)
+    reward_sums = np.zeros((n))
+    if i==n_iter-1 or i==0:
+        render=True
+    else:
+        render =False
+    for k in range(n):
+        print("迭代:",i,"轨迹:",k)
+        #sample rewards based on policy parameters in row k of wvector_array
+        # 基于wvector_array第 k 行中的策略参数的示例奖励
+        reward_sums[k] = noisy_evaluation(env,wvector_array[k,:],render)
+        # reward_sums 40个回合的轨迹奖励
+
+    #sort params/vectors based on total reward of an episode using that policy
+    # 使用该策略根据剧集的总奖励对参数/向量进行排序
+    rankings = np.argsort(reward_sums)  #np.argsort 返回的是元素值从小到大排序后的索引值的数组
+    #pick p vectors with highest reward
+    # 选择奖励最高的 P 向量
+    top_vectors = wvector_array[rankings,:]    #n=40个 参数向量
+    top_vectors = top_vectors[-p:,:]                   #p=8个   参数向量
+    print("top vectors shpae:{}".format(top_vectors.shape))
+    #fit new gaussian from which to sample policy  拟合从中采样策略的新高斯
+    for q in range(top_vectors.shape[1]):  #q 0-3，将8*4,每列8个取均值和方差
+        mu[q] = top_vectors[:,q].mean()
+        sigma[q] = top_vectors[:,q].std()+get_constant_noise(i) # 在方差更新项加入扰动
+
+    running_reward = 0.99*running_reward + 0.01*reward_sums.mean()
+    print("#############################################################################")
+    print("iteration:{},mean reward:{}, running reward mean:{} \n"
+            " reward range:{} to {},".format(
+                i, reward_sums.mean(),running_reward,reward_sums.min(),reward_sums.max(),
+                ))
+    i += 1
